@@ -6,8 +6,32 @@ var Map = require('es6-map');
 var traverse = require('estraverse').replace;
 var estemplate = require('estemplate');
 
+function defaultMapper(options) {
+	return function (files) {
+		return files.flatMap(function (file) {
+			return options.replaces
+				.flatMap(function (replace) {
+					var handler = replace.handler;
+
+					return Rx.Observable.fromArray(squery.queryParsed(replace.selector, file.program)).map(function (node) {
+						return [node, handler(node)];
+					});
+				})
+				.filter(function (replace) { return replace[1] !== undefined })
+				.toArray()
+				.map(function (replaces) {
+					file.program = traverse(file.program, {
+						leave: Map.prototype.get.bind(new Map(replaces))
+					});
+
+					return file;
+				});
+		});
+	}
+}
+
 module.exports = function (options) {
-	var replaces = Rx.Observable.fromArray(Object.keys(options)).map(function (selector) {
+	var defaultReplaces = Rx.Observable.fromArray(Object.keys(options)).map(function (selector) {
 		var handler = options[selector];
 
 		if (typeof handler === 'string') {
@@ -45,25 +69,12 @@ module.exports = function (options) {
 		};
 	});
 
-	return function (files) {
-		return files.flatMap(function (file) {
-			return replaces
-				.flatMap(function (replace) {
-					var handler = replace.handler;
+	// note that file is essentially any src AST, which has a .program node
+	var qMapper = options.queryMapper || defaultMapper
+	qMapper = typeof qMapper === 'function' ? qMapper(options) : qMapper
+	var replaces = options.replaces || defaultReplaces
+	replaces  = typeof replaces === 'function' ? replaces(options) : replaces
+	options.replaces = replaces
 
-					return Rx.Observable.fromArray(squery.queryParsed(replace.selector, file.program)).map(function (node) {
-						return [node, handler(node)];
-					});
-				})
-				.filter(function (replace) { return replace[1] !== undefined })
-				.toArray()
-				.map(function (replaces) {
-					file.program = traverse(file.program, {
-						leave: Map.prototype.get.bind(new Map(replaces))
-					});
-
-					return file;
-				});
-		});
-	}
+	return qMapper
 };

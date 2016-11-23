@@ -2,7 +2,7 @@
 
 var Rx = require('rx');
 var squery = require('grasp-squery');
-var Map = require('es6-map');
+var Map = Map || require('es6-map');
 var traverse = require('estraverse').replace;
 var estemplate = require('estemplate');
 
@@ -13,14 +13,14 @@ function defaultMapper(options) {
 				.flatMap(function (replace) {
 					var handler = replace.handler;
 
-					return Rx.Observable.fromArray(squery.queryParsed(replace.selector, file.program)).map(function (node) {
+					return Rx.Observable.fromArray(options.squery.queryParsed(replace.selector, file.program)).map(function (node) {
 						return [node, handler(node)];
 					});
 				})
 				.filter(function (replace) { return replace[1] !== undefined })
 				.toArray()
 				.map(function (replaces) {
-					file.program = traverse(file.program, {
+					file.program = options.traverse(file.program, {
 						leave: Map.prototype.get.bind(new Map(replaces))
 					});
 
@@ -31,12 +31,17 @@ function defaultMapper(options) {
 }
 
 module.exports = function (options) {
+	options = options || {}
+	options.squery = options.squery || squery
+	options.traverse = options.traverse || traverse
+	options.estemplate = options.estemplate || estemplate
+
 	var defaultReplaces = Rx.Observable.fromArray(Object.keys(options)).map(function (selector) {
 		var handler = options[selector];
 
 		if (typeof handler === 'string') {
 			var canBeExprStmt = handler.slice(-1) === ';';
-			var tmpl = estemplate.compile(handler, {tolerant: true});
+			var tmpl = options.estemplate.compile(handler, {tolerant: true});
 
 			handler = function (node) {
 				var ast = tmpl(node);
@@ -64,17 +69,17 @@ module.exports = function (options) {
 		}
 
 		return {
-			selector: squery.parse(selector),
+			selector: options.squery.parse(selector),
 			handler: handler
 		};
 	});
 
-	// note that file is essentially any src AST, which has a .program node
-	var qMapper = options.queryMapper || defaultMapper
-	qMapper = typeof qMapper === 'function' ? qMapper(options) : qMapper
 	var replaces = options.replaces || defaultReplaces
 	replaces  = typeof replaces === 'function' ? replaces(options) : replaces
 	options.replaces = replaces
+
+	var qMapper = options.queryMapper || defaultMapper
+	qMapper = typeof qMapper === 'function' ? qMapper(options) : qMapper
 
 	return qMapper
 };
